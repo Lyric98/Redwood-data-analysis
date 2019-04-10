@@ -1,0 +1,396 @@
+---
+title: '2.28'
+output: html_document
+---
+
+```{r}
+library(ggplot2)
+library(plyr)
+library(dplyr)
+library(reshape2)
+
+
+
+setwd(file.path("/Users/liyanran/Desktop/19Spring/STAT154/project/data"))
+log <- read.csv('sonoma-data-log.csv',header=T)
+net <- read.csv('sonoma-data-net.csv',header=T)
+all <- read.csv('sonoma-data-all.csv', header=T)
+locs <- read.table('mote-location-data.txt', header=T)
+
+
+# Create a data frame tbl
+log <- tbl_df(log)
+net <- tbl_df(net)
+all <- tbl_df(all)
+locs <- tbl_df(locs)
+
+log_v <- data.frame(log$voltage)
+p1 <- ggplot(log_v, aes(log$voltage)) + geom_histogram(color='white',fill='gray60')+ ylab(label = 'total number') 
+#png(file="log_volt.png", bg="transparent")
+ggsave(filename="log_volt.png", plot = p1, width = 8, height = 5, path = "/Users/liyanran/Desktop/19Spring/STAT154/project/fig")
+
+net_v <- data.frame(net$voltage)
+p2 <- ggplot(net_v, aes(net$voltage)) + geom_histogram(color='white',fill='gray60')+ ylab(label = 'total number') 
+ggsave(filename="net_volt.png", plot = p2, width = 8, height = 5, path = "/Users/liyanran/Desktop/19Spring/STAT154/project/fig")
+
+
+# convert voltage in net
+mote_dups <- merge(log[,c("epoch","nodeid","voltage")], 
+                   net[,c("epoch","nodeid","voltage")],
+                   by = c("epoch", "nodeid"), all.x = FALSE, all.y = FALSE)
+mote_dups <- unique(mote_dups) %>% filter(voltage.x < 1000 & voltage.y < 1000)
+volt_lm <- lm(voltage.x ~ voltage.y, data = mote_dups)
+p3 <- ggplot(mote_dups,mapping = aes(x = voltage.y, y = voltage.x, color = as.factor(nodeid))) + 
+  geom_point(size = 0.6) +
+  geom_smooth(method = lm, se=TRUE, size = 0.6, color = "brown") +
+  labs(x = "voltage from net", y = "voltage from log", color = "Nodes") +
+  theme(axis.title = element_text(size = 14),
+        axis.text = element_text(size = 8))
+mote_all$voltage[mote_all$voltage>100] <- coef(volt_lm)[1] + coef(volt_lm)[1] * mote_all$voltage[mote_all$voltage>100]
+
+ggsave(filename="voltage_conversion.png", plot = p3, width = 8, height = 5, path = "/Users/liyanran/Desktop/19Spring/STAT154/project/fig")
+
+cor(mote_dups$voltage.y, mote_dups$voltage.x)^2
+
+## do conversion now
+net$voltage <- -0.01205 * net$voltage+ 5.35135
+all$voltage[which(all$voltage >200)] <- -0.01205 * all$voltage[which(all$voltage >200)] + 5.35135
+
+```
+
+
+```{r}
+mote_all <- na.omit(all)
+
+mote_all <- merge(mote_all, locs, all.x = FALSE,
+                  all.y = FALSE, by.x = "nodeid", by.y = "ID")
+summary(mote_all)
+mote_all$Tree <- as.factor(mote_all$Tree)
+#table(mote_all$Tree)
+mote_all$Direc <- as.factor(mote_all$Direc)
+#table(mote_all$Direc)
+table(mote_all$Dist)
+#table(mote_all$Height)
+names(mote_all) # the number of variables in our new data frame: 12
+```
+
+```{r}
+#humidity
+quantile(mote_all$humidity)
+# ggplot(mote_all)+geom_point(aes(x=epoch, y=humidity))
+# negalog.humid <- filter(log, humidity <0)
+# negalog.humid
+# dim(negalog.humid) #662*11
+nega.humid <- filter(mote_all, humidity < 0)
+dim(nega.humid) #843*15
+group_by(nega.humid, nodeid)%>%summarise(n=n())
+
+## # A tibble: 5 x 2
+##   nodeid     n
+##    <int> <int>
+## 1     29   660
+## 2     78     3
+## 3    123    88
+## 4    141    91
+## 5    198     1
+
+# we have found 5 suspicious nodeid that have caused this, let's see if all values associated with them are funny
+node.29 <- filter(mote_all, nodeid==29)
+summary(node.29)
+
+ggplot(node.29) + geom_point(aes(x=epoch, y=humidity)) #constant
+ggplot(node.29) + geom_point(aes(x = epoch, y = humid_temp)) #constant out of range
+ggplot(node.29) + geom_point(aes(x = epoch, y = hamatop))
+ggplot(node.29) + geom_point(aes(x = epoch, y = hamabot))
+#well, that settles it, nodeid 29 produced constant humidty data, hence definitely an error.  
+#let's go ahead and delete all of node 29's output humidity and temperature output (set to NA)
+
+# mote_all[mote_all["nodeid"] == 29, ]["humidity"] <- NA
+# mote_all[mote_all["nodeid"] == 29, ]["humid_temp"] <- NA
+
+node.78 <- filter(mote_all, nodeid==78, humidity < 0)
+
+ggplot(node.78)+geom_histogram(aes(humidity))
+#looks pretty normal, just that one outlier, so let's go ahead delete it safely
+#infact, it looks like it took a lot of crazy readings aside from negative humidity (nega temp, insane hamatop...etc)
+#so delete
+
+
+#3rd let's look at node 123
+
+nodeid.123 <- filter(mote_all, nodeid==123, humidity < 0)
+#this guy's measurements are also off the charts (ridiculously high tempature, too high depth...we can delete), but only one datapoint, so we just deleted it
+
+#4th let's look at node 141
+
+nodeid.141 <- filter(mote_all, nodeid==141, humidity < 0)
+#this guy's measurements are also off the charts (ridiculously high tempature, too high depth...we can delete), but only one datapoint, so we just deleted it
+
+#5th let's look at node 198
+
+filter(mote_all, nodeid==198, humidity < 0)
+#this guy's measurements are also off the charts (ridiculously high tempature, too high depth...we can delete), but only one datapoint, so we just deleted it
+
+mote_all <- subset(mote_all, humidity>0)
+
+
+
+
+
+
+summary(mote_all["humidity"]) #looks quite normal
+
+ggplot(mote_all)+geom_point(aes(x=epoch, y=humidity)) #looks like it is varying by day, so quite normal
+#and good for timeseries later
+```
+
+```{r}
+# temperature
+ggplot(mote_all)+geom_point(aes(x=epoch, y=humid_temp))
+filter(mote_all, humid_temp > 50)
+mote_all <- subset(mote_all, nodeid != 9 & nodeid != 78 & nodeid !=123 & nodeid !=141 & nodeid != 145)
+ggplot(mote_all)+geom_point(aes(x=epoch, y=humid_temp))
+```
+
+```{r}
+# hamatop
+hist(mote_all$hamatop)
+high.hamatop <- filter(mote_all, hamatop > 150000)
+group_by(high.hamatop, nodeid)%>%summarise(n=n())
+mote_all <- subset(mote_all, hamatop < 150000)
+ggplot(mote_all)+geom_point(aes(x=epoch, y=hamatop))
+
+# hamabot
+hist(mote_all$hamabot)
+mote_all <- subset(mote_all, hamabot < 9720)
+
+# voltage
+# mote_all <- subset(mote_all, voltage < 150)
+# mote_all[mote_all["nodeid"] == 3, ]["voltage"] <- NA
+# mote_all[mote_all["nodeid"] == 128, ]["voltage"] <- NA
+# mote_all[mote_all["nodeid"] == 134, ]["voltage"] <- NA
+# mote_all[mote_all["nodeid"] == 142, ]["voltage"] <- NA
+# mote_all[mote_all["nodeid"] == 143, ]["voltage"] <- NA
+
+#write.csv(mote_all, file = "cleaned_data.csv")
+```
+
+
+
+```{r}
+# convert time
+cvt_time <- function(epoch) {
+  origin_epoch <- 2
+  result <- strptime("2004-4-27 17:15:00", format = "%Y-%m-%d %H:%M:%S")
+  result$min <- result$min + 5 * (epoch - origin_epoch)
+  return(result)
+}
+all_04$actual_time <- cvt_time(all_04$epoch)
+write.csv(all_04, file = "convertedtime.csv",row.names = FALSE, quote=FALSE)
+
+```
+
+```{r}
+library(GGally)
+ggpairs(all_04)
+```
+
+```{r}
+# ggplot 4 varibles in time series
+library(ggplot2)
+ggplot(all_04) +    geom_point(mapping = aes(x = as.POSIXct(actual_time), y = hamabot, color = Height), size = 0.4) +  labs(x = "Time", y = "Reflected PAR") +   scale_color_gradient(low="blue", high = "yellow")
+
+ggplot(all_04) +    geom_point(mapping = aes(x = as.POSIXct(actual_time), y = humidity, color = Height), size = 0.4) +
+  labs(x = "Time", y = "Relative Humidity") +
+  scale_color_gradient(low="blue", high = "yellow")
+
+ggplot(all_04) + 
+  geom_point(mapping = aes(x = as.POSIXct(actual_time), y = humid_temp, color = Height), size = 0.4) +
+ labs(x = "Time", y = "Temperature") +
+   scale_color_gradient(low="blue", high = "yellow")
+
+ggplot(all_04) + 
+  geom_point(mapping = aes(x = as.POSIXct(actual_time), y = hamatop, color = Height), size = 0.4) +
+   labs(x = "Time", y = "Incident PAR") +
+   scale_color_gradient(low="blue", high = "yellow")
+```
+
+```{r}
+setwd(file.path("/Users/liyanran/Desktop/19Spring/STAT154/project/data"))
+prob_3a <- read.csv('cleanedwithvoltage.csv', header=T)
+head(prob_3a)
+prob_3a <- prob_3a[,-1]
+vrbl <- c(5,7,8,10,11) #voltage, humidity, temp, hamatop, hamabot column number
+fdc <- na.omit(prob_3a)
+ggpairs(fdc[,vrbl])
+
+```
+```{r}
+library(ggplot2)
+library(reshape2)
+library(dplyr)
+library(gridExtra)
+library(Rmisc)
+library(scales)
+
+setwd(file.path("/Users/liyanran/Desktop/19Spring/STAT154/project/data"))
+mote_all06 <- read.csv('convertedtime.csv')
+mote_int <- mote_all06 %>% filter(Tree == "interior")
+mote_int$actual_time <- as.POSIXct(mote_int$actual_time)
+all_06 <- na.omit(mote_int)
+
+## Temperal trend of spatial gradients
+# temperature
+int_melt <- all_06 %>% 
+  mutate(actual_hours = format(actual_time, "%H:%M:%S")) %>%
+  select(humid_temp, humid_adj, hamatop, hamabot, Height, actual_hours) %>%
+  melt(id = c("Height", "actual_hours"))
+int_melt_mean_temp <- dcast(int_melt %>% filter(variable == "humid_temp"), Height + actual_hours ~ variable,
+                       fun.aggregate = mean)
+p1 <- int_melt_mean_temp %>%
+  ggplot() + 
+  geom_tile(mapping = aes(x=as.POSIXct(strptime(actual_hours, format = "%H:%M:%S", tz = 'PST')),
+                            y=as.factor(Height), fill = humid_temp)) +
+  scale_fill_gradient(low = "yellow", high = "red1") +
+  scale_x_datetime(breaks=date_breaks('2 hour'),
+                   labels=date_format('%H:%M', tz = 'PST')) +
+  labs(y = "Height", fill = "Temperature") +
+  theme(axis.text.x = element_text(angle = 90, size = 10, hjust =1, vjust = 0.5),
+        axis.text.y = element_text(size = 10),
+        axis.title.x = element_blank(),
+        axis.title.y = element_text(size = 16),
+        legend.title = element_text(size =14),
+        legend.key.size = unit(0.5, "cm"),
+        legend.margin = unit(0, "cm"))
+
+# humidity
+int_melt_mean_humid <- dcast(int_melt %>% filter(variable == "humid_adj"), Height + actual_hours ~ variable,
+                            fun.aggregate = mean)
+p2 <- int_melt_mean_humid %>%
+  ggplot() + 
+  geom_tile(mapping = aes(x=as.POSIXct(strptime(actual_hours, format = "%H:%M:%S", tz = 'PST')),
+                          y=as.factor(Height), fill = humid_adj)) +
+  scale_fill_gradient(low = "yellow", high = "red1") +
+  scale_x_datetime(breaks=date_breaks('2 hour'),
+                   labels=date_format('%H:%M', tz = 'PST')) +
+  labs(y = "Height", fill = "Humidity       ") +
+  theme(axis.text.x = element_text(angle = 90, size = 10, hjust =1, vjust = 0.5),
+        axis.text.y = element_text(size = 10),
+        axis.title.x = element_blank(),
+        axis.title.y = element_text(size = 16),
+        legend.title = element_text(size =14),
+        legend.key.size = unit(0.5, "cm"),
+        legend.margin = unit(0, "cm"))
+
+
+# hamatop
+int_melt_mean_hamatop <- dcast(int_melt %>% filter(variable == "hamatop"), Height + actual_hours ~ variable,
+                             fun.aggregate = mean, na.rm = TRUE)
+p3 <- int_melt_mean_hamatop %>%
+  ggplot() + 
+  geom_tile(mapping = aes(x=as.POSIXct(strptime(actual_hours, format = "%H:%M:%S", tz = 'PST')),
+                          y=as.factor(Height), fill = hamatop)) +
+  scale_fill_gradient(low = "brown", high = "yellow") +
+  scale_x_datetime(breaks=date_breaks('2 hour'),
+                   labels=date_format('%H:%M', tz = 'PST')) +
+  labs(x = "Time", y = "Height", fill = "Incident PAR") +
+  theme(axis.text.x = element_text(angle = 90, size = 10, hjust =1, vjust = 0.5),
+        axis.text.y = element_text(size = 10),
+        axis.title = element_text(size = 16),
+        legend.title = element_text(size =14),
+        legend.key.size = unit(0.5, "cm"),
+        legend.margin = unit(0, "cm"))
+
+# hamabot
+int_melt_mean_hamabot <- dcast(int_melt %>% filter(variable == "hamabot"), Height + actual_hours ~ variable,
+                               fun.aggregate = mean, na.rm = TRUE)
+p4 <- int_melt_mean_hamabot %>%
+  ggplot() + 
+  geom_tile(mapping = aes(x=as.POSIXct(strptime(actual_hours, format = "%H:%M:%S", tz = 'PST')),
+                          y=as.factor(Height), fill = hamabot)) +
+  scale_fill_gradient(low = "brown", high = "yellow") +
+  scale_x_datetime(breaks=date_breaks('2 hour'),
+                   labels=date_format('%H:%M', tz = 'PST')) +
+  labs(x = "Time", y = "Height", fill = "Reflected PAR") +
+  theme(axis.text.x = element_text(angle = 90, size = 10, hjust =1, vjust = 0.5),
+        axis.text.y = element_text(size = 10),
+        axis.title = element_text(size = 16),
+        legend.title = element_text(size =14),
+        legend.key.size = unit(0.5, "cm"),
+        legend.margin = unit(0, "cm"))
+multiplot(p1,p3,p2,p4,cols = 2)
+```
+
+# 5d
+```{r}
+ggplot() +
+  geom_bar(data = log, mapping = aes(x = as.factor(humidity), fill = "log data"), alpha = 1) +
+  geom_bar(data = net, mapping = aes(x = as.factor(humidity), fill = "net data"), alpha = 0.5) +
+  labs(x = "Nodes", y = "Number of data entries") +
+  theme() +
+  scale_fill_manual(name = NULL, values = c("darkgrey", "royalblue1")) +
+  guides(fill = guide_legend()) +
+  theme(legend.position=c(0.15, 0.9), 
+        legend.background = element_rect(fill = "transparent"),
+        legend.key.size = unit(5, "mm"))
+```
+
+# 5a
+```{r}
+library(ggplot2)
+library(scales)
+
+p <- ggplot(df, aes(x=hamatop, y=..prop..)) + geom_bar()
+# gp <- ggplot(df, aes(hamatop)) + geom_bar() +
+#     scale_y_continuous(
+#             name = 'Some Data Cumulative Percent',
+#             labels = percent ) +
+#     scale_x_log10(
+#             name = 'Object ID', 
+#             breaks = trans_breaks("log10", function(x) 10^x),
+#             labels = trans_format("log10", math_format(10^.x)))
+
+print(p)
+#ggsave('x_log10_y_percent.png')
+
+
+```
+
+
+
+
+```{r}
+library(ggplot2)
+library(reshape2)
+library(dplyr)
+library(gridExtra)
+library(Rmisc)
+library(scales)
+raw_hamatop <- data.frame(all_07$hamatop/54)
+logx_hamatop01 <- data.frame(log(all_07$hamatop/54 +1)+1)
+p1 <- ggplot(logx_hamatop01, aes(x = all_07$hamatop/54, y = (..count..)/sum(..count..))) + geom_histogram(color='white',fill='purple')+  labs(title = "Incident PAR with log_x_axis")+ xlab(label=' umol/m^2/s') + ylab(label = 'percentage of readings') + scale_x_log10(+1) +scale_y_continuous(labels = percent) 
+p1
+p2 <- ggplot(raw_hamatop, aes(x = all_07$hamatop/54, y = (..count..)/sum(..count..))) + geom_histogram(color='white',fill='purple', binwidth = 300)+ ylab(label = 'total number') +scale_y_continuous(labels = percent)
+
+
+raw_hamabot <- data.frame(all_07$hamabot/54)
+logx_hamabot01 <- data.frame(log(all_07$hamabot/54 + 1)+1)
+p3 <- ggplot(logx_hamabot01, aes(x = all_07$hamabot/54, y = (..count..)/sum(..count..))) + geom_histogram(color='white',fill='purple')+  labs(title = "Reflected PAR with log_x_axis")+ xlab(label=' umol/m^2/s') + ylab(label = 'percentage of readings') + scale_x_log10() +scale_y_continuous(labels = percent) 
+p3
+p4 <- ggplot(raw_hamabot, aes(x = all_07$hamabot/54, y = (..count..)/sum(..count..))) + geom_histogram(color='white',fill='purple')+ ylab(label = 'total number') +scale_y_continuous(labels = percent)
+multiplot(p1,p3,cols = 2)
+```
+```{r}
+all_07$binned.height <- cut(all_07$Height, c(10, 15, 20,25, 30,35, 40,45, 50,55, 60,65, 70))
+dataepochfilter <- filter(all_07, epoch >3000 & epoch < 8000)
+hamabot.dis <- ggplot(na.omit(dataepochfilter), aes(binned.height, hamabot))
+
+p1 <- hamabot.dis + geom_boxplot(aes(fill= Direc), outlier.colour = alpha("yellow", 0.05), outlier.size = 3)+  labs(title = "Reflected PAR ")
+
+hamatop.dis <- ggplot(na.omit(dataepochfilter), aes(binned.height, hamatop))
+
+p2 <- hamatop.dis + geom_boxplot(aes(fill= Direc), outlier.colour = alpha("yellow", 0.05), outlier.size = 3) +  labs(title = "Incident PAR")
+multiplot(p2,p1,cols = 2)
+```
+
+
